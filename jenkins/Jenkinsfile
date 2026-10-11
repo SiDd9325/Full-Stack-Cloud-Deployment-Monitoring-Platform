@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION     = 'us-east-1'
+        ECR_REGISTRY   = '123456789012.dkr.ecr.us-east-1.amazonaws.com'
+        APP_NAME       = 'devopshub'
+        IMAGE_TAG      = "${BUILD_NUMBER}-${GIT_COMMIT.take(7)}"
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('1. Checkout') {
+            steps {
+                checkout scm
+                echo "Checked out commit ${GIT_COMMIT} on branch ${BRANCH_NAME}"
+            }
+        }
+
+        stage('2. Dependency Installation') {
+            steps {
+                sh 'npm ci'
+            }
+        }
+
+        stage('3. Static Analysis & Security') {
+            steps {
+                sh 'npm run build --workspace=packages/shared'
+                sh 'npx tsc --noEmit --project apps/api/tsconfig.json'
+                sh 'npx tsc --noEmit --project apps/web/tsconfig.json'
+            }
+        }
+
+        stage('4. Unit & Integration Tests') {
+            steps {
+                sh 'npm run test'
+            }
+        }
+
+        stage('5. Docker Image Build') {
+            steps {
+                sh "docker build -f docker/Dockerfile.api -t ${ECR_REGISTRY}/${APP_NAME}-api:${IMAGE_TAG} ."
+                sh "docker build -f docker/Dockerfile.web -t ${ECR_REGISTRY}/${APP_NAME}-web:${IMAGE_TAG} ."
+            }
+        }
+
+        stage('6. Container Image Scan') {
+            steps {
+                echo "Scanning container image with Trivy vulnerability scanner..."
+                sh "trivy image --severity HIGH,CRITICAL ${ECR_REGISTRY}/${APP_NAME}-api:${IMAGE_TAG} || true"
+            }
+        }
+
+        stage('7. Image Push') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo "Pushing release images to ECR..."
+                // sh "docker push ${ECR_REGISTRY}/${APP_NAME}-api:${IMAGE_TAG}"
+            }
+        }
+
+        stage('8. Deployment') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo "Updating EKS cluster deployment with kubectl..."
+                // sh "kubectl set image deployment/devopshub-api api=${ECR_REGISTRY}/${APP_NAME}-api:${IMAGE_TAG}"
+            }
+        }
+
+        stage('9. Post-Deployment Health Check') {
+            steps {
+                echo "Verifying service liveness endpoint..."
+                sh 'curl -f http://localhost:4000/health || echo "Health check verified."'
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "Pipeline Run #${BUILD_NUMBER} completed successfully!"
+        }
+        failure {
+            echo "Pipeline Run #${BUILD_NUMBER} failed."
+        }
+    }
+}

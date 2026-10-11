@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: devopshub-postgres
+    environment:
+      POSTGRES_USER: devopshub
+      POSTGRES_PASSWORD: devopshub_password
+      POSTGRES_DB: devopshub_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devopshub -d devopshub_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  devopshub-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: devopshub-api
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      NODE_ENV: development
+      DATABASE_URL: "file:../../prisma/dev.db"
+      JWT_SECRET: "devopshub_super_secret_jwt_key_2026_change_in_prod"
+      CORS_ORIGIN: "http://localhost:5173"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  devopshub-web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    container_name: devopshub-web
+    ports:
+      - "5173:80"
+    depends_on:
+      - devopshub-api
+
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: devopshub-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:10.3.1
+    container_name: devopshub-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:

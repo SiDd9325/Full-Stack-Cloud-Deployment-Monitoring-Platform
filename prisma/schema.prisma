@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String          @id @default(uuid())
+  email        String          @unique
+  passwordHash String
+  name         String
+  role         String          @default("DEVELOPER") // ADMIN, DEVELOPER
+  avatarUrl    String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  projects     Project[]       @relation("OwnerProjects")
+  memberships  ProjectMember[]
+  pipelineRuns PipelineRun[]   @relation("UserPipelineRuns")
+  deployments  Deployment[]    @relation("UserDeployments")
+  auditEvents  AuditEvent[]
+}
+
+model Project {
+  id           String          @id @default(uuid())
+  name         String
+  description  String
+  repoUrl      String
+  ownerId      String
+  owner        User            @relation("OwnerProjects", fields: [ownerId], references: [id], onDelete: Cascade)
+  status       String          @default("ACTIVE") // ACTIVE, ARCHIVED, DEGRADED, MAINTENANCE
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  members      ProjectMember[]
+  pipelines    Pipeline[]
+  deployments  Deployment[]
+  logs         ApplicationLog[]
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @default("DEVELOPER")
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+}
+
+model Pipeline {
+  id             String        @id @default(uuid())
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String
+  gitBranch      String        @default("main")
+  provider       String        @default("GITHUB_ACTIONS") // GITHUB_ACTIONS, JENKINS
+  jenkinsJobName String?
+  workflowFile   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  runs           PipelineRun[]
+
+  @@index([projectId])
+}
+
+model PipelineRun {
+  id            String          @id @default(uuid())
+  pipelineId    String
+  pipeline      Pipeline        @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  provider      String          @default("GITHUB_ACTIONS")
+  status        String          @default("QUEUED") // QUEUED, RUNNING, SUCCESS, FAILED, CANCELLED
+  commitSha     String
+  commitMessage String?
+  branch        String          @default("main")
+  durationMs    Int             @default(0)
+  startedAt     DateTime        @default(now())
+  finishedAt    DateTime?
+  triggeredById String
+  triggeredBy   User            @relation("UserPipelineRuns", fields: [triggeredById], references: [id])
+  stages        PipelineStage[]
+  deployments   Deployment[]
+
+  @@index([pipelineId])
+  @@index([status])
+}
+
+model PipelineStage {
+  id         String      @id @default(uuid())
+  runId      String
+  run        PipelineRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  name       String
+  order      Int
+  status     String      @default("QUEUED")
+  durationMs Int         @default(0)
+  logOutput  String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  @@index([runId])
+}
+
+model Deployment {
+  id                String           @id @default(uuid())
+  projectId         String
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pipelineRunId     String
+  pipelineRun       PipelineRun      @relation(fields: [pipelineRunId], references: [id])
+  environment       String           @default("STAGING") // DEVELOPMENT, STAGING, PRODUCTION
+  version           String
+  imageTag          String
+  status            String           @default("IN_PROGRESS") // PENDING, IN_PROGRESS, SUCCESS, FAILED, ROLLED_BACK
+  deployedById      String
+  deployedBy        User             @relation("UserDeployments", fields: [deployedById], references: [id])
+  healthCheckPassed Boolean          @default(true)
+  rollbackFromId    String?
+  startedAt         DateTime         @default(now())
+  finishedAt        DateTime?
+  durationMs        Int              @default(0)
+  errorDetails      String?
+  logs              ApplicationLog[]
+
+  @@index([projectId])
+  @@index([environment])
+  @@index([status])
+}
+
+model ApplicationLog {
+  id           String      @id @default(uuid())
+  projectId    String?
+  project      Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deploymentId String?
+  deployment   Deployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  service      String
+  level        String      @default("INFO") // DEBUG, INFO, WARN, ERROR, FATAL
+  message      String
+  metadataJson String?
+  timestamp    DateTime    @default(now())
+
+  @@index([projectId])
+  @@index([deploymentId])
+  @@index([level])
+  @@index([timestamp])
+}
+
+model AuditEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  details   String
+  ipAddress String?
+  timestamp DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+}
